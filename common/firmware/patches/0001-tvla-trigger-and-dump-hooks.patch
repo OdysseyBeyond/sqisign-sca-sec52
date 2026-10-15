@@ -1,0 +1,143 @@
+diff -ruN p/src/ideal.c q/src/ideal.c
+--- p/src/ideal.c	2026-10-15 20:34:49.819049655 +0900
++++ q/src/ideal.c	2026-10-15 20:34:50.019340922 +0900
+@@ -5,6 +5,52 @@
+ #include <quaternion_data.h>
+ #include <quaternion_constants.h>
+ 
++#ifdef TVLA_TRIG_VALUEREGION
++#include "hal.h"
++#define TRIG_HI() trigger_high()
++#define TRIG_LO() trigger_low()
++#else
++#define TRIG_HI()
++#define TRIG_LO()
++#endif
++
++#ifdef TVLA_TRIG_OUTREGION
++#include "hal.h"
++#define TRIG2_HI() trigger_high()
++#define TRIG2_LO() trigger_low()
++#else
++#define TRIG2_HI()
++#define TRIG2_LO()
++#endif
++#ifdef TVLA_DUMP_OUT
++void tvla_dump_out(const ibz_t *x, const ibz_t *y, const ibz_t *n);
++void tvla_dump_pre(const ibz_t *xpre, const ibz_t *t);
++#endif
++#ifdef TVLA_TRIG_EQUIVREGION
++#include "hal.h"
++#define TRIG3_HI() trigger_high()
++#define TRIG3_LO() trigger_low()
++#else
++#define TRIG3_HI()
++#define TRIG3_LO()
++#endif
++#ifdef TVLA_DUMP_EQUIV
++void tvla_dump_equiv_in(const quat_alg_elem_t *gen, const ibz_t *n);
++void tvla_dump_equiv_gen(const quat_alg_elem_t *g, const ibz_t *s, const ibz_t *t, const ibz_t *n);
++void tvla_dump_equiv_out(const ibz_t *x, const ibz_t *y, const ibz_t *n);
++#endif
++#ifdef TVLA_TRIG_STOREREGION
++#include "hal.h"
++#define TRIG4_HI() trigger_high()
++#define TRIG4_LO() trigger_low()
++#else
++#define TRIG4_HI()
++#define TRIG4_LO()
++#endif
++#ifdef TVLA_DUMP_STORE
++void tvla_dump_store(const ibz_t *x, const ibz_t *y, const ibz_t *n);
++#endif
++
+ void
+ quat_to_lattice(quat_lattice_t *lattice, const quat_ideal_t *ideal)
+ {
+@@ -67,6 +113,9 @@
+     ibz_init(&q);
+     ibz_vec_2_init(&tmp_g);
+     quat_alg_elem_init(&tmp_gen);
++#ifdef TVLA_DUMP_EQUIV
++    tvla_dump_equiv_in(gen, norm);
++#endif
+     quat_alg_elem_copy(&tmp_gen, gen);
+     quat_alg_normalize(&tmp_gen);
+     quat_mod_O0(&tmp_gen, &tmp_gen, norm);
+@@ -111,7 +160,11 @@
+         // t = (2s)^-1 mod n
+         ibz_add(&tmp, &s, &s);
+         ibz_invmod(&t, &tmp, norm);
++#ifdef TVLA_DUMP_EQUIV
++        tvla_dump_equiv_gen(&tmp_gen, &s, &t, norm);
++#endif
+         // x = 2 ((ac + bd)t mod N )
++        TRIG3_HI();
+         ibz_neg(&(tmp_gen.coord.v[3]), &(tmp_gen.coord.v[3]));
+         ibz_vec_2_gaussian_mul(&tmp_g, (ibz_vec_2_t *)&(tmp_gen.coord.v[0]), (ibz_vec_2_t *)&(tmp_gen.coord.v[2]));
+         ibz_neg(&(tmp_gen.coord.v[3]), &(tmp_gen.coord.v[3]));
+@@ -126,6 +179,10 @@
+         ibz_mod(&y, &tmp, norm);
+         //  Mat_inert
+         quat_xyn_to_inert_ideal(ideal, &x, &y, norm);
++        TRIG3_LO();
++#ifdef TVLA_DUMP_EQUIV
++        tvla_dump_equiv_out(&x, &y, norm);
++#endif
+     }
+     return (1);
+ }
+@@ -463,7 +520,13 @@
+         ibz_vec_2_gaussian_mul(&tmp, &tmp, &tmp);
+         ibz_mod(&tmp.v[0], &tmp.v[0], &t);
+         ibz_mod(&tmp.v[1], &tmp.v[1], &t);
++#ifdef TVLA_DUMP_GAUSS
++        { extern void tvla_dump_gauss(const ibz_vec_2_t *, const ibz_vec_2_t *);
++          tvla_dump_gauss(&setter, &tmp); }
++#endif
++        TRIG_HI();
+         ibz_vec_2_gaussian_mul(&tmp, &setter, &tmp);
++        TRIG_LO();
+         ibz_mod(&tmp.v[0], &tmp.v[0], &t);
+         ibz_mod(&tmp.v[1], &tmp.v[1], &t);
+ 
+@@ -476,6 +539,10 @@
+         assert(!ibz_is_odd(&tmp.v[0]));
+         ibz_div_2exp(&x, &tmp.v[0], 1);
+         // X2 = (X2 / 2) t mod N2
++        TRIG2_HI();
++#ifdef TVLA_DUMP_OUT
++        tvla_dump_pre(&x, &t);
++#endif
+         ibz_mul(&x, &x, &t);
+         ibz_mod(&x, &x, &b->norm);
+         // Y2 = ((Y2 − u^2 - v^2 ) / 2) t mod N2
+@@ -485,6 +552,10 @@
+         ibz_div_2exp(&y, &y, 1);
+         ibz_mul(&y, &y, &t);
+         ibz_mod(&y, &y, &b->norm);
++        TRIG2_LO();
++#ifdef TVLA_DUMP_OUT
++        tvla_dump_out(&x, &y, &b->norm);
++#endif
+     }
+ 
+     // x2=a[0,2]/2
+@@ -494,12 +565,17 @@
+ 
+     // x =  CRT([x1 , X2 ], [N1 , N2 ])
+     // y =  CRT([y1 , Y2 ], [N1 , N2 ])
++    TRIG4_HI();
+     ibz_crt(&x, &x2, &x, &a->norm, &b->norm);
+     ibz_crt(&y, &y2, &y, &a->norm, &b->norm);
+ 
+     ibz_mul(&r, &a->norm, &b->norm);
+     // inert mat
+     quat_xyn_to_inert_ideal(intersection, &x, &y, &r);
++    TRIG4_LO();
++#ifdef TVLA_DUMP_STORE
++    tvla_dump_store(&x, &y, &r);
++#endif
+ }
+ 
+ void

@@ -1,0 +1,23 @@
+# fetched / generated sources
+common/firmware/sqisign/
+common/firmware/.the-sqisign/
+# host binaries
+*/host/bin/
+# raw power traces (not distributed, ~3 GB)
+*.npz
+# ChipWhisperer build outputs
+objdir*/
+*.hex
+*.elf
+*.bin.o
+*.eep
+*.lss
+*.map
+*.sym
+*.o
+*.d
+*CWLITEARM.bin
+# python / editors
+__pycache__/
+*.pyc
+.DS_Store

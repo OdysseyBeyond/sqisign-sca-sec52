@@ -1,0 +1,49 @@
+\begin{lstlisting}[language=C, float=tb, basicstyle=\ttfamily\scriptsize, label={lst:exp-intersection},
+  caption={Traced tail of \texttt{quat\_ideal\_intersect\_O0} (\texttt{src/ideal.c}
+  of the reference implementation; initializations and assertions omitted).
+  \texttt{a} is the operand with split generator \texttt{split\_a}${}=u+vi$ and
+  \texttt{b} the operand in inert representation
+  (\texttt{b->x}, \texttt{b->y}, \texttt{b->norm}${}=N_2$) whose coordinates
+  are secret-dependent. The comments W1--W3 mark the regions analysed in the
+  text: the Gaussian multiply, the coordinate-forming multiplies, and the CRT
+  recombination with materialization of $(x,y)$.}]
+// setter = 2 b->x + (2 b->y + 1) i
+ibz_add(&setter.v[0], &b->x, &b->x);
+ibz_add(&setter.v[1], &b->y, &b->y);
+ibz_add(&setter.v[1], &setter.v[1], &ibz_const_one);
+// tmp = (u - v i)^2 mod 2 N2
+ibz_copy(&tmp.v[0], &(split_a->coord).v[0]);
+ibz_neg(&tmp.v[1], &(split_a->coord).v[1]);
+ibz_add(&t, &b->norm, &b->norm);
+ibz_vec_2_gaussian_mul(&tmp, &tmp, &tmp);
+ibz_mod(&tmp.v[0], &tmp.v[0], &t);
+ibz_mod(&tmp.v[1], &tmp.v[1], &t);
+/* W1: Gaussian multiply, setter is a multiplicand */
+ibz_vec_2_gaussian_mul(&tmp, &setter, &tmp);
+ibz_mod(&tmp.v[0], &tmp.v[0], &t);
+ibz_mod(&tmp.v[1], &tmp.v[1], &t);
+ibz_mul(&u2, &split_a->coord.v[0], &split_a->coord.v[0]);
+ibz_mul(&v2, &split_a->coord.v[1], &split_a->coord.v[1]);
+ibz_add(&t, &u2, &v2);
+// t = (u^2 + v^2)^{-1} mod N2
+ibz_invmod(&t, &t, &b->norm);
+ibz_div_2exp(&x, &tmp.v[0], 1);          // x_pre
+/* W2: coordinate-forming multiplies */
+// X2 = x_pre * t mod N2
+ibz_mul(&x, &x, &t);
+ibz_mod(&x, &x, &b->norm);
+// Y2 = ((Y2 - u^2 - v^2) / 2) * t mod N2
+ibz_sub(&y, &tmp.v[1], &u2);
+ibz_sub(&y, &y, &v2);
+ibz_div_2exp(&y, &y, 1);
+ibz_mul(&y, &y, &t);
+ibz_mod(&y, &y, &b->norm);
+/* W3: CRT recombination, materialization of (x, y) */
+ibz_copy(&x2, &a->x);
+ibz_copy(&y2, &a->y);
+// x = CRT([x1, X2], [N1, N2]), y = CRT([y1, Y2], [N1, N2])
+ibz_crt(&x, &x2, &x, &a->norm, &b->norm);
+ibz_crt(&y, &y2, &y, &a->norm, &b->norm);
+ibz_mul(&r, &a->norm, &b->norm);
+quat_xyn_to_inert_ideal(intersection, &x, &y, &r);
+\end{lstlisting}

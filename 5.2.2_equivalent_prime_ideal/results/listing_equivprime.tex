@@ -1,0 +1,37 @@
+\begin{lstlisting}[language=C, float=tb, basicstyle=\ttfamily\scriptsize, label={lst:exp-equivprime},
+  caption={Traced tail of \texttt{quat\_ideal\_create\_O0\_inert\_odd}
+  (\texttt{src/ideal.c}), the routine that turns the accepted generator into
+  the inert representation $(n,(x,y))$ of $J_t$ inside
+  \textsf{EquivalentCoprimeIdeal}. \texttt{tmp\_gen.coord.v[0..3]} hold the
+  coordinates $a,b,c,d$ of $\gamma'$ reduced modulo \texttt{norm}${}=n$. The
+  acquisition window is the region between the two comments. The routine
+  stores $x'=(ac+bd)\,t \bmod n$ and $y'=(bc-ad-s)\,t \bmod n$; the coordinates
+  $x=2x'$ and $y=1+2y'$ quoted in the text are formed when the generator is
+  reconstituted (\texttt{quat\_ideal\_odd\_inert\_gen}).}]
+// s = c^2 + d^2 mod n
+ibz_mul(&tmp, &tmp_gen.coord.v[2], &tmp_gen.coord.v[2]);
+ibz_mul(&r, &tmp_gen.coord.v[3], &tmp_gen.coord.v[3]);
+ibz_add(&tmp, &tmp, &r);
+ibz_mod(&s, &tmp, norm);
+// t = (2s)^{-1} mod n
+ibz_add(&tmp, &s, &s);
+ibz_invmod(&t, &tmp, norm);
+/* acquisition window opens */
+// (a + b i)(c - d i) = (ac + bd) + (bc - ad) i
+ibz_neg(&tmp_gen.coord.v[3], &tmp_gen.coord.v[3]);
+ibz_vec_2_gaussian_mul(&tmp_g, (ibz_vec_2_t *)&tmp_gen.coord.v[0],
+                               (ibz_vec_2_t *)&tmp_gen.coord.v[2]);
+ibz_neg(&tmp_gen.coord.v[3], &tmp_gen.coord.v[3]);
+ibz_mod(&tmp_g.v[0], &tmp_g.v[0], norm);
+ibz_mod(&tmp_g.v[1], &tmp_g.v[1], norm);
+// x = (ac + bd) t mod n
+ibz_mul(&tmp, &tmp_g.v[0], &t);
+ibz_mod(&x, &tmp, norm);
+// y = (bc - ad - s) t mod n
+ibz_sub(&tmp, &tmp_g.v[1], &s);
+ibz_mod(&tmp, &tmp, norm);
+ibz_mul(&tmp, &tmp, &t);
+ibz_mod(&y, &tmp, norm);
+quat_xyn_to_inert_ideal(ideal, &x, &y, norm);
+/* acquisition window closes */
+\end{lstlisting}

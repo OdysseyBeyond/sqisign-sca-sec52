@@ -1,0 +1,222 @@
+diff -ruN p/src/mp.c q/src/mp.c
+--- p/src/mp.c	2026-10-15 20:34:49.863300476 +0900
++++ q/src/mp.c	2026-10-15 20:34:50.061804877 +0900
+@@ -856,51 +856,14 @@
+ static void
+ mp_div_unsigned(digit_t *q, digit_t *r, const digit_t *u, int ulen, const digit_t *v, int vlen)
+ {
+-    assert(vlen >= 1);
+-    assert(v[vlen - 1] != 0);
++    /* Route all unsigned division through the radix-portable schoolbook
++       (Knuth D). The Burnikel-Ziegler fast path mis-forms the quotient at
++       RADIX<32. Quotient buffer is zeroed to the same length BZ produced. */
+     int n = vlen;
+-
+-    unsigned shift = mp_clz_digit(v[n - 1]);
+-    digit_t vn[n];
+-    mp_shl_words(vn, v, n, shift);
+-
+-    int un_len = ulen + 1;
+-    digit_t un[un_len];
+-    digit_t topcarry = mp_shl_words(un, u, ulen, shift);
+-    un[ulen] = topcarry;
+-
+-    int t = un_len / n;
+-    if (un_len % n) {
+-        t++;
+-    }
++    int t = (ulen + 1) / n; if ((ulen + 1) % n) t++;
+     int qbuf_len = t * n + 1;
+-
+     memset(q, 0, (size_t)qbuf_len * sizeof(digit_t));
+-
+-    digit_t rem[n];
+-    memset(rem, 0, (size_t)n * sizeof(digit_t));
+-
+-    for (int i = t - 1; i >= 0; i--) {
+-        digit_t window[2 * n];
+-        for (int k = 0; k < n; k++) {
+-            int j = i * n + k;
+-            window[k] = (j < un_len) ? un[j] : 0;
+-        }
+-        if (i == t - 1) {
+-            digit_t borrow = mp_sub_raw(rem, n, window, n, vn, n);
+-            if (borrow) {
+-                memcpy(rem, window, (size_t)n * sizeof(digit_t));
+-            } else {
+-                q[i * n] = 1;
+-            }
+-            continue;
+-        }
+-        memcpy(window + n, rem, (size_t)n * sizeof(digit_t));
+-        digit_t qi[n + 1];
+-        mp_div_d2n1n(qi, rem, window, vn, n);
+-        mp_add_inplace_at(q, qbuf_len, qi, n + 1, i * n);
+-    }
+-    mp_shr_words(r, rem, n, shift);
++    mp_divmod_schoolbook(q, r, u, ulen, v, vlen);
+ }
+ 
+ // Returns the exact word count mp_div_unsigned for q (non-CT).
+@@ -1860,13 +1823,13 @@
+ 
+     // base is a power of two: exact digit count.
+     if ((base & (base - 1)) == 0) {
+-        int k = digit_bitlen((digit_t)base) - 1;
++        int k = 0; { int bb = base; while (bb > 1) { bb >>= 1; ++k; } }
+         return (n + k - 1) / k;
+     }
+ 
+     // Generic non-power-of-two base: log2(base) is strictly greater than digit_bitlen(base) - 1, so dividing by that
+     // gives a safe upper bound.
+-    int b = digit_bitlen((digit_t)base) - 1;
++    int b = 0; { int bb = base; while (bb > 1) { bb >>= 1; ++b; } }
+     return (n + b - 1) / b + 1;
+ }
+ 
+@@ -2448,121 +2411,33 @@
+ int
+ ibz_invmod(ibz_t *inv, const ibz_t *a, const ibz_t *mod)
+ {
+-    assert(a->bitlen > 0);
+-    assert(mod->bitlen > 0);
+-    assert(ibz_is_positive(mod));
+-    assert(!ibz_is_zero(mod));
+-    assert(inv != mod);
+-
+-    int n = int_max(a->bitlen, mod->bitlen);
+-    int L = NUM_LIMBS(n);
+-
+-    digit_t a_neg = ~(digit_t)ibz_is_positive(a);
+-    ibz_t abs_a = { 0 }, abs_mod = { 0 };
+-    ibz_cneg(&abs_a, a, a_neg);
+-    ibz_copy(&abs_mod, mod);
+-
+-    digit_t u[L], v[L];
+-    ibz_t cu = { 0 }, cv = { 0 };
+-    if (mp_compare(abs_a.limbs, abs_mod.limbs, (unsigned int)L) >= 0) {
+-        memcpy(u, abs_a.limbs, (size_t)L * sizeof(digit_t));
+-        memcpy(v, abs_mod.limbs, (size_t)L * sizeof(digit_t));
+-        ibz_set(&cu, 1, 2);
+-        ibz_set(&cv, 0, 2);
+-    } else {
+-        memcpy(u, abs_mod.limbs, (size_t)L * sizeof(digit_t));
+-        memcpy(v, abs_a.limbs, (size_t)L * sizeof(digit_t));
+-        ibz_set(&cu, 0, 2);
+-        ibz_set(&cv, 1, 2);
+-    }
+-
+-    int ulen = L;
+-    while (ulen > 1 && u[ulen - 1] == 0) {
+-        ulen--;
+-    }
+-    int vlen = L;
+-    while (vlen > 1 && v[vlen - 1] == 0) {
+-        vlen--;
+-    }
+-
+-    while (1) {
+-        if (v[vlen - 1] == 0) {
+-            break;
+-        }
+-
+-        sdigit_t A, B, C, D;
+-        int steps;
+-        if (ulen - vlen >= 2) {
+-            steps = 0;
++    /* radix-portable modular inverse; all intermediates kept in [0,mod)
++       so no negative-operand arithmetic is exercised. */
++    ibz_t r0={0}, r1={0}, s0={0}, s1={0}, q={0}, t={0}, tmp={0}, ns={0}, one={0};
++    ibz_set(&one, 1, 2);
++    ibz_mod(&r0, a, mod);
++    if (!ibz_is_positive(&r0) && !ibz_is_zero(&r0)) ibz_add(&r0, &r0, mod);
++    ibz_copy(&r1, mod);
++    ibz_set(&s0, 1, 2);
++    ibz_set(&s1, 0, 2);
++    while (!ibz_is_zero(&r1)) {
++        ibz_div(&q, &t, &r0, &r1);
++        ibz_copy(&r0, &r1);
++        ibz_copy(&r1, &t);
++        ibz_mul(&tmp, &q, &s1);
++        ibz_mod(&tmp, &tmp, mod);
++        if (ibz_cmp(&s0, &tmp) >= 0) {
++            ibz_sub(&ns, &s0, &tmp);
+         } else {
+-            int has_lo = (ulen >= 2);
+-            ddigit_t x = ((ddigit_t)u[ulen - 1] << NUM_BITS_LIMB) | (has_lo ? (ddigit_t)u[ulen - 2] : 0);
+-            ddigit_t y = ((ddigit_t)v[ulen - 1] << NUM_BITS_LIMB) | (has_lo ? (ddigit_t)v[ulen - 2] : 0);
+-            steps = mp_lehmer_inner(x, y, &A, &B, &C, &D);
++            ibz_sub(&t, &tmp, &s0);
++            ibz_sub(&ns, mod, &t);
+         }
+-
+-        if (steps == 0) {
+-            int qbuf_len = mp_div_qlen(ulen, vlen);
+-            digit_t qbuf[qbuf_len];
+-            digit_t rbuf[vlen];
+-            mp_div_unsigned(qbuf, rbuf, u, ulen, v, vlen);
+-
+-            int qlen = qbuf_len;
+-            while (qlen > 1 && qbuf[qlen - 1] == 0) {
+-                qlen--;
+-            }
+-
+-            ibz_t qz = { 0 }, q_cv = { 0 }, new_cv = { 0 };
+-            ibz_copy_digits(&qz, qbuf, qlen);
+-            ibz_mul(&q_cv, &qz, &cv);
+-            ibz_sub(&new_cv, &cu, &q_cv);
+-            ibz_copy(&cu, &cv);
+-            ibz_copy(&cv, &new_cv);
+-
+-            memcpy(u, v, (size_t)vlen * sizeof(digit_t));
+-            memset(u + vlen, 0, (size_t)(L - vlen) * sizeof(digit_t));
+-            memcpy(v, rbuf, (size_t)vlen * sizeof(digit_t));
+-            memset(v + vlen, 0, (size_t)(L - vlen) * sizeof(digit_t));
+-        } else {
+-            int reslen = ((ulen > vlen) ? ulen : vlen) + 2;
+-            digit_t new_u[reslen], new_v[reslen];
+-            mp_lehmer_combine(new_u, reslen, A, u, ulen, B, v, vlen);
+-            mp_lehmer_combine(new_v, reslen, C, u, ulen, D, v, vlen);
+-
+-            ibz_t t1 = { 0 }, t2 = { 0 }, new_cu = { 0 }, new_cv = { 0 };
+-            mp_mul_small_signed(&t1, A, &cu);
+-            mp_mul_small_signed(&t2, B, &cv);
+-            ibz_add(&new_cu, &t1, &t2);
+-            mp_mul_small_signed(&t1, C, &cu);
+-            mp_mul_small_signed(&t2, D, &cv);
+-            ibz_add(&new_cv, &t1, &t2);
+-            ibz_copy(&cu, &new_cu);
+-            ibz_copy(&cv, &new_cv);
+-
+-            memset(u, 0, (size_t)L * sizeof(digit_t));
+-            memset(v, 0, (size_t)L * sizeof(digit_t));
+-            int ccount = (reslen < L) ? reslen : L;
+-            memcpy(u, new_u, (size_t)ccount * sizeof(digit_t));
+-            memcpy(v, new_v, (size_t)ccount * sizeof(digit_t));
+-        }
+-
+-        ulen = L;
+-        while (ulen > 1 && u[ulen - 1] == 0) {
+-            ulen--;
+-        }
+-        vlen = L;
+-        while (vlen > 1 && v[vlen - 1] == 0) {
+-            vlen--;
+-        }
+-
+-        assert(mp_compare(u, v, (unsigned int)L) >= 0);
++        ibz_copy(&s0, &s1);
++        ibz_copy(&s1, &ns);
+     }
+-
+-    ibz_t coeff = { 0 };
+-    ibz_cneg(&coeff, &cu, a_neg);
+-    ibz_mod(inv, &coeff, mod);
+-
+-    return (ulen == 1 && u[0] == 1) ? -1 : 0;
++    int invertible = (ibz_cmp(&r0, &one) == 0);
++    ibz_copy(inv, &s0);
++    return invertible ? -1 : 0;
+ }
+ 
+ // Computes an inverse mod 2^e via Newton-Hensel lifting
